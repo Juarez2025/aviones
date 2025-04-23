@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Juego de Aviones Retro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: #1e293b;
+    }
+    canvas {
+      background: #2563eb;
+      display: block;
+      margin: 0 auto;
+      border-radius: 1rem;
+      box-shadow: 0 0 24px #0008;
+    }
+  </style>
+</head>
+<body class="flex flex-col items-center min-h-screen py-8">
+  <h1 class="text-3xl font-bold text-white mb-2">Juego de Aviones Retro</h1>
+  <div class="bg-white/80 rounded-lg p-4 mb-4 max-w-lg shadow-lg">
+    <h2 class="text-xl font-semibold mb-2">¿Cómo jugar?</h2>
+    <ul class="list-disc pl-6 text-gray-700 text-base">
+      <li>Mueve tu avión con las <b>flechas</b> del teclado (⬅️⬆️⬇️➡️).</li>
+      <li>Dispara con la tecla <b>Espacio</b> (⎵).</li>
+      <li>Destruye los aviones enemigos y esquiva sus ataques.</li>
+      <li>¡Sobrevive y consigue la mayor puntuación posible!</li>
+    </ul>
+    <p class="mt-2 text-sm text-gray-500">Para jugar, solo abre este archivo en tu navegador (doble clic).</p>
+  </div>
+  <canvas id="game" width="400" height="500"></canvas>
+  <script>
+    // --- Configuración del juego ---
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    // --- Recursos gráficos simples (sprites con canvas) ---
+    function drawPlayer(x, y) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.moveTo(0, -15);
+      ctx.lineTo(8, 10);
+      ctx.lineTo(0, 5);
+      ctx.lineTo(-8, 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#38bdf8";
+      ctx.fillRect(-3, 5, 6, 10);
+      ctx.restore();
+    }
+    function drawEnemy(x, y, size = 18) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = "#22c55e";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size, size/2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#166534";
+      ctx.fillRect(-size/2, -2, size, 4);
+      ctx.restore();
+    }
+    function drawBullet(x, y, color="#fbbf24") {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.fillRect(x-2, y-8, 4, 10);
+      ctx.restore();
+    }
+    function drawExplosion(x, y, r) {
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = "#f87171";
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // --- Estado del juego ---
+    let player = { x: W/2, y: H-50, w: 20, h: 20, speed: 4, alive: true };
+    let bullets = [];
+    let enemies = [];
+    let enemyBullets = [];
+    let explosions = [];
+    let score = 0;
+    let lives = 3;
+    let keys = {};
+    let gameOver = false;
+    let frame = 0;
+
+    // --- Controles ---
+    document.addEventListener('keydown', e => {
+      keys[e.code] = true;
+      if (e.code === "Space" && player.alive && !gameOver) shoot();
+      if (gameOver && e.code === "Enter") restart();
+    });
+    document.addEventListener('keyup', e => keys[e.code] = false);
+
+    // --- Disparo del jugador ---
+    function shoot() {
+      if (bullets.length > 0 && frame - bullets[bullets.length-1].frame < 10) return;
+      bullets.push({ x: player.x, y: player.y-15, frame });
+    }
+
+    // --- Generación de enemigos ---
+    function spawnEnemy() {
+      const x = Math.random() * (W-40) + 20;
+      const speed = 1.2 + Math.random() * 0.8;
+      const size = Math.random() < 0.15 ? 32 : 18; // Algunos grandes
+      enemies.push({ x, y: -30, size, speed, hp: size > 20 ? 3 : 1, shootCd: 0 });
+    }
+
+    // --- Lógica principal ---
+    function update() {
+      if (!player.alive || gameOver) return;
+
+      // Movimiento jugador
+      if (keys["ArrowLeft"] && player.x > 15) player.x -= player.speed;
+      if (keys["ArrowRight"] && player.x < W-15) player.x += player.speed;
+      if (keys["ArrowUp"] && player.y > 20) player.y -= player.speed;
+      if (keys["ArrowDown"] && player.y < H-20) player.y += player.speed;
+
+      // Balas jugador
+      bullets.forEach(b => b.y -= 8);
+      bullets = bullets.filter(b => b.y > -10);
+
+      // Enemigos
+      if (frame % 40 === 0) spawnEnemy();
+      enemies.forEach(e => {
+        e.y += e.speed;
+        // Disparo enemigo
+        if (e.size > 20 && Math.random() < 0.02 && e.y > 0) {
+          enemyBullets.push({ x: e.x, y: e.y+e.size/2, vy: 3 });
+        }
+      });
+      enemies = enemies.filter(e => e.y < H+30 && e.hp > 0);
+
+      // Balas enemigas
+      enemyBullets.forEach(b => b.y += b.vy);
+      enemyBullets = enemyBullets.filter(b => b.y < H+10);
+
+      // Colisiones: balas jugador vs enemigos
+      bullets.forEach(b => {
+        enemies.forEach(e => {
+          if (Math.abs(b.x - e.x) < e.size && Math.abs(b.y - e.y) < e.size/1.5) {
+            e.hp--;
+            b.y = -20;
+            if (e.hp <= 0) {
+              explosions.push({ x: e.x, y: e.y, r: 1, max: e.size });
+              score += e.size > 20 ? 200 : 100;
+            }
+          }
+        });
+      });
+
+      // Colisiones: balas enemigas vs jugador
+      enemyBullets.forEach(b => {
+        if (Math.abs(b.x - player.x) < 12 && Math.abs(b.y - player.y) < 12) {
+          loseLife();
+          b.y = H+20;
+        }
+      });
+
+      // Colisiones: enemigos vs jugador
+      enemies.forEach(e => {
+        if (Math.abs(e.x - player.x) < e.size && Math.abs(e.y - player.y) < e.size/1.5) {
+          loseLife();
+          e.hp = 0;
+        }
+      });
+
+      // Explosiones
+      explosions.forEach(ex => ex.r += 2);
+      explosions = explosions.filter(ex => ex.r < ex.max);
+
+      frame++;
+    }
+
+    function loseLife() {
+      if (!player.alive) return;
+      lives--;
+      explosions.push({ x: player.x, y: player.y, r: 1, max: 30 });
+      player.alive = false;
+      setTimeout(() => {
+        if (lives > 0) {
+          player.x = W/2; player.y = H-50; player.alive = true;
+        } else {
+          gameOver = true;
+        }
+      }, 900);
+    }
+
+    // --- Dibujo ---
+    function draw() {
+      // Fondo
+      ctx.clearRect(0, 0, W, H);
+      // Agua (textura simple)
+      for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = i%2 ? "#2563eb" : "#1e40af";
+        ctx.globalAlpha = 0.08;
+        ctx.beginPath();
+        ctx.arc((i*37+frame*0.7)%W, (i*53+frame*1.1)%H, 18, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // Explosiones
+      explosions.forEach(ex => drawExplosion(ex.x, ex.y, ex.r));
+
+      // Enemigos
+      enemies.forEach(e => drawEnemy(e.x, e.y, e.size));
+
+      // Balas
+      bullets.forEach(b => drawBullet(b.x, b.y));
+      enemyBullets.forEach(b => drawBullet(b.x, b.y, "#f87171"));
+
+      // Jugador
+      if (player.alive) drawPlayer(player.x, player.y);
+
+      // UI
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px monospace";
+      ctx.fillText("PUNTOS: " + score, 12, 28);
+      ctx.fillText("VIDAS: " + "♥".repeat(lives), W-110, 28);
+
+      // Game Over
+      if (gameOver) {
+        ctx.fillStyle = "#000a";
+        ctx.fillRect(0, H/2-60, W, 120);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 32px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", W/2, H/2);
+        ctx.font = "18px monospace";
+        ctx.fillText("Puntaje: " + score, W/2, H/2+32);
+        ctx.fillText("Presiona ENTER para reiniciar", W/2, H/2+60);
+        ctx.textAlign = "left";
+      }
+    }
+
+    // --- Bucle principal ---
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // --- Reinicio ---
+    function restart() {
+      player = { x: W/2, y: H-50, w: 20, h: 20, speed: 4, alive: true };
+      bullets = [];
+      enemies = [];
+      enemyBullets = [];
+      explosions = [];
+      score = 0;
+      lives = 3;
+      gameOver = false;
+      frame = 0;
+    }
+
+    // --- Iniciar juego ---
+    loop();
+  </script>
+</body>
+</html>
